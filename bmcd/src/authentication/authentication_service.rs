@@ -95,11 +95,11 @@ where
                 .peer_addr()
                 .unwrap_or_default()
                 .to_string();
-            let mut context = context.lock().await;
 
             // handle authentication requests and return
             if request.request().uri().path() == auth_path {
-                return authentication_request(&mut request, &peer, &mut context).await;
+                return authentication_request(&mut request, &peer, &mut *context.lock().await)
+                    .await;
             }
 
             let auth = match parse_authorization_header(&request) {
@@ -109,7 +109,9 @@ where
                 }
             };
 
-            if let Err(e) = context.authorize_request(&peer, auth).await {
+            // only hold the lock while authorizing, not while the request is served.
+            let authorized = context.lock().await.authorize_request(&peer, auth).await;
+            if let Err(e) = authorized {
                 unauthorized_response(request.request(), e, realm)
             } else {
                 service
