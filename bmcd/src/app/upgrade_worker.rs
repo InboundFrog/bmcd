@@ -176,13 +176,8 @@ impl UpgradeWorker {
         let mut writer = WriteMonitor::new(&mut file, &mut self.written_sender, &crc);
         copy_or_cancel(source, &mut writer, &self.cancel).await?;
 
-        let result = spawn_blocking(move || {
-            Command::new("sh")
-                .arg("-c")
-                .arg(format!("osupdate {}", os_update_img.to_string_lossy()))
-                .status()
-        })
-        .await?;
+        let result =
+            spawn_blocking(move || Command::new("osupdate").arg(&os_update_img).status()).await?;
 
         tokio::fs::remove_dir_all(TMP_UPGRADE_DIR).await?;
 
