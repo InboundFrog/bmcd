@@ -85,7 +85,12 @@ impl DataTransfer {
         Ok(Self::Url {
             file_name,
             sha256,
-            response: Some(reqwest::get(url).await.context("http file request error")?),
+            response: Some(
+                reqwest::get(url)
+                    .await
+                    .and_then(reqwest::Response::error_for_status)
+                    .context("http file request error")?,
+            ),
         })
     }
 }
