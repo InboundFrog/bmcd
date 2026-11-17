@@ -24,15 +24,11 @@ use std::{path::PathBuf, process::Output};
 use tokio::io::AsyncBufReadExt;
 
 pub fn string_from_utf16(bytes: &[u8], little_endian: bool) -> String {
-    let u16s = bytes.chunks_exact(2).map(|pair| {
-        let Ok(owned) = pair.try_into() else {
-            unreachable!()
-        };
-
+    let u16s = bytes.as_chunks::<2>().0.iter().map(|&pair| {
         if little_endian {
-            u16::from_le_bytes(owned)
+            u16::from_le_bytes(pair)
         } else {
-            u16::from_be_bytes(owned)
+            u16::from_be_bytes(pair)
         }
     });
 

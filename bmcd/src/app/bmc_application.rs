@@ -190,7 +190,7 @@ impl BmcApplication {
         }
 
         // cleanup storage
-        let map: CoolingMap = HashMap::from_iter(set_devices.into_iter());
+        let map: CoolingMap = HashMap::from_iter(set_devices);
         info!("loaded cooling devices: {:?}", map);
         self.app_db.set(COOLING_DEVICES, map).await;
 
