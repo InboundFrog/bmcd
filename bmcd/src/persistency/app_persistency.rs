@@ -94,7 +94,10 @@ impl MonitorContext {
             .write(true)
             .open(&new)
             .await?;
-        self.inner.write(pending.into_std().await).await?;
+        let pending = pending.into_std().await;
+        self.inner.write(pending.try_clone()?).await?;
+        // data must be on disk before the rename makes it the active file.
+        pending.sync_all()?;
 
         tokio::fs::rename(&new, &file).await.with_context(|| {
             format!(

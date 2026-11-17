@@ -490,7 +490,8 @@ async fn set_usb_mode(bmc: &BmcApplication, query: Query) -> LegacyResult<()> {
     let mode_num = i32::from_str(mode_str)
         .map_err(|_| LegacyResponse::bad_request("Parameter `mode` is not a number"))?;
 
-    let mode = UsbMode::from_api_mode(mode_num);
+    let mode = UsbMode::from_api_mode(mode_num)
+        .ok_or(LegacyResponse::bad_request("Unsupported `mode` parameter"))?;
 
     let route = if (mode_num >> 2) & 0x1 == 1 {
         UsbRoute::Bmc

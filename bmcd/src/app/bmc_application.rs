@@ -250,7 +250,7 @@ impl BmcApplication {
             .unwrap_or_default();
 
         for (idx, new_state) in bit_iterator(node_states, mask) {
-            let current_state = activated_nodes & (1 << idx);
+            let current_state = (activated_nodes >> idx) & 1;
             let current_time = get_timestamp_unix();
             let node_info = &mut node_infos[idx];
 
@@ -438,7 +438,7 @@ impl BmcApplication {
         let mut node_infos = self.app_db.get::<NodeInfos>(NODE_INFO_KEY).await;
         node_infos.iter_mut().for_each(|info| {
             if let Some(time) = &mut info.power_on_time {
-                *time = current_time - *time;
+                *time = current_time.saturating_sub(*time);
             }
         });
 
