@@ -73,9 +73,8 @@ impl UpgradeWorker {
         bmc: Arc<BmcApplication>,
         node: NodeId,
     ) -> anyhow::Result<()> {
-        let device = bmc.node_in_flash(node, UsbRoute::Bmc).await?;
-
-        let result = async move {
+        let result = async {
+            let device = bmc.node_in_flash(node, UsbRoute::Bmc).await?;
             let reader = self.data_transfer.reader().await?;
             let mut buf_stream =
                 BufStream::with_capacity(BLOCK_READ_SIZE, BLOCK_WRITE_SIZE, device);
@@ -99,13 +98,15 @@ impl UpgradeWorker {
             tracing::info!("Flashing {node} successful, restoring USB & power settings.");
         }
 
-        // disregarding the result, set the BMC in the finalized state.
-        bmc.activate_slot(node.to_inverse_bitfield(), node.to_bitfield())
-            .await?;
-        bmc.usb_boot(node, false).await?;
+        // disregarding the result, set the BMC in the finalized state. Every
+        // step runs even if a previous one failed; the first error is returned.
+        let power_off = bmc
+            .activate_slot(node.to_inverse_bitfield(), node.to_bitfield())
+            .await;
+        let usb_boot = bmc.usb_boot(node, false).await;
         let (mode, _) = bmc.get_usb_mode().await;
-        bmc.configure_usb(mode).await?;
-        result
+        let usb = bmc.configure_usb(mode).await;
+        result.and(power_off).and(usb_boot).and(usb)
     }
 
     async fn try_write_node(
