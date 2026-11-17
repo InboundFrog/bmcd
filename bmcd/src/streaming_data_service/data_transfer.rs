@@ -85,30 +85,28 @@ impl DataTransfer {
         Ok(Self::Url {
             file_name,
             sha256,
-            response: Some(reqwest::get(url).await.context("http file request error")?),
+            response: Some(
+                reqwest::get(url)
+                    .await
+                    .and_then(reqwest::Response::error_for_status)
+                    .context("http file request error")?,
+            ),
         })
     }
 }
 
 impl DataTransfer {
+    /// Returns the last path component only, so callers can never be steered
+    /// outside of a directory by a user supplied name (e.g. "/etc/x" or "..").
     pub fn file_name(&self) -> anyhow::Result<&OsStr> {
-        match self {
-            DataTransfer::Local { path } => Ok(path
-                .file_name()
-                .ok_or(std::io::Error::from(ErrorKind::InvalidInput))?),
-            DataTransfer::Remote {
-                file_name,
-                size: _,
-                sha256: _,
-                sender: _,
-                receiver: _,
-            } => Ok(file_name.as_os_str()),
-            DataTransfer::Url {
-                file_name,
-                sha256: _,
-                response: _,
-            } => Ok(file_name.as_os_str()),
-        }
+        let path = match self {
+            DataTransfer::Local { path } => path,
+            DataTransfer::Remote { file_name, .. } => file_name,
+            DataTransfer::Url { file_name, .. } => file_name,
+        };
+        Ok(path
+            .file_name()
+            .ok_or(std::io::Error::from(ErrorKind::InvalidInput))?)
     }
 
     pub fn size(&self) -> anyhow::Result<u64> {
@@ -251,4 +249,25 @@ fn available_memory() -> io::Result<u64> {
     Ok(physical_pages
         .and_then(|pages| page_size.map(|size| size as u64 * pages as u64))
         .unwrap_or(u64::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(file: &str) -> Option<String> {
+        DataTransfer::remote(PathBuf::from(file), 0, 1, None)
+            .file_name()
+            .ok()
+            .map(|n| n.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn file_name_strips_directories() {
+        assert_eq!(name("image.img").as_deref(), Some("image.img"));
+        assert_eq!(name("/etc/shadow").as_deref(), Some("shadow"));
+        assert_eq!(name("../../etc/cron.d/x").as_deref(), Some("x"));
+        assert_eq!(name(".."), None);
+        assert_eq!(name("/"), None);
+    }
 }

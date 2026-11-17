@@ -663,12 +663,18 @@ async fn handle_file_upload(
 
     let mut bytes_send: u64 = 0;
     while let Some(Ok(chunk)) = field.next().await {
-        let length = chunk.len();
+        bytes_send += chunk.len() as u64;
+        if bytes_send > size {
+            ss.cancel_all().await;
+            return Err(LegacyResponse::bad_request(format!(
+                "upload exceeds announced length of {}",
+                format_size(size, DECIMAL)
+            )));
+        }
+
         if sender.send(chunk).await.is_err() {
             return Err(return_transfer_error(ss).await.into());
         }
-
-        bytes_send += length as u64;
     }
 
     if bytes_send != size {
