@@ -3,7 +3,7 @@ name = "bmcd"
 version = "2.3.7"
 edition = "2021"
 license = "Apache-2.0"
-rust-version = "1.75.0"
+rust-version = "1.89.0"
 
 [dependencies]
 actix = "0.13.5"
