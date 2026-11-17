@@ -438,7 +438,7 @@ impl BmcApplication {
         let mut node_infos = self.app_db.get::<NodeInfos>(NODE_INFO_KEY).await;
         node_infos.iter_mut().for_each(|info| {
             if let Some(time) = &mut info.power_on_time {
-                *time = current_time - *time;
+                *time = current_time.saturating_sub(*time);
             }
         });
 
