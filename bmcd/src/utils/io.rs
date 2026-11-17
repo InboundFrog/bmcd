@@ -77,7 +77,7 @@ where
 
         match result {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(Ok(bytes))) if !bytes.is_empty() => {
+            Poll::Ready(Some(Ok(bytes))) => {
                 me.hasher
                     .as_mut()
                     .expect("hasher can never be None")
@@ -85,10 +85,7 @@ where
                 Poll::Ready(Some(Ok(bytes)))
             }
             Poll::Ready(Some(Err(_))) => result,
-            _ => {
-                // stream is exhausted. This means one of the following:
-                // * `Poll::Ready(Some(bytes))` was empty
-                // * `Poll::Ready(None)` end of stream signal.
+            Poll::Ready(None) => {
                 if let Err(e) = me.verify_hash() {
                     Poll::Ready(Some(Err(e)))
                 } else {
@@ -210,6 +207,20 @@ mod test {
         }
 
         assert_eq!(expected_crc, writer.crc());
+    }
+
+    #[tokio::test]
+    async fn sha256_stream_allows_empty_chunks() {
+        use futures::StreamExt;
+        let expected_sha = Sha256::digest(b"abcd").to_vec();
+        let chunks = ["ab", "", "cd"].map(|c| Ok(bytes::Bytes::from(c)));
+        let mut stream =
+            Sha256StreamValidator::new(futures::stream::iter(chunks), expected_sha.into());
+        let mut data = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            data.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(data, b"abcd");
     }
 
     //   #[tokio::test]
