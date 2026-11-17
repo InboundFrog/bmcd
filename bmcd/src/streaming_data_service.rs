@@ -72,9 +72,12 @@ impl StreamingDataService {
             format_size(context.size, DECIMAL),
         );
 
+        // hold the lock until the new state is set, so a worker that finishes
+        // immediately cannot report back before its transfer is registered.
+        let mut status = self.status.lock().await;
         self.execute_worker(&context, request.worker).await;
-        Self::cancel_request_on_timeout(self.status.clone());
-        *self.status.lock().await = StreamingState::Transferring(context);
+        Self::cancel_request_on_timeout(self.status.clone(), id);
+        *status = StreamingState::Transferring(context);
 
         Ok(id)
     }
@@ -83,13 +86,13 @@ impl StreamingDataService {
         *self.status.lock().await = StreamingState::Error("cancelled by user".to_string());
     }
 
-    fn cancel_request_on_timeout(status: Arc<Mutex<StreamingState>>) {
+    fn cancel_request_on_timeout(status: Arc<Mutex<StreamingState>>, id: u32) {
         tokio::spawn(async move {
             sleep(Duration::from_secs(10)).await;
             let mut status_unlocked = status.lock().await;
 
             if let StreamingState::Transferring(ctx) = status_unlocked.deref() {
-                if ctx.data_sender.is_some() {
+                if ctx.id == id && ctx.data_sender.is_some() {
                     tracing::warn!("#{} got cancelled due to timeout", ctx.id);
                     *status_unlocked = StreamingState::Error("Send timeout".to_string());
                 }
@@ -137,7 +140,7 @@ impl StreamingDataService {
                         id
                     );
 
-                    (StreamingState::Done(duration, size), false)
+                    (StreamingState::Done(duration, size), cancel.is_cancelled())
                 },
             );
 
@@ -145,7 +148,12 @@ impl StreamingDataService {
             // from `StreamingState::Transferring` (see `TransferContext::drop()`). The state is
             // already correct, therefore we omit a state transition in this scenario.
             let mut status_unlocked = status.lock().await;
+            // a newer transfer may have replaced this one; leave its state alone.
             if let StreamingState::Transferring(ctx) = &*status_unlocked {
+                if ctx.id != id {
+                    return;
+                }
+
                 tracing::debug!(
                     "last recorded transfer state: {:#?}",
                     serde_json::to_string(ctx)
@@ -282,4 +290,46 @@ pub struct TransferRequest {
     pub progress_watcher: watch::Receiver<u64>,
     pub worker: BoxFuture<'static, anyhow::Result<()>>,
     pub cancel: CancellationToken,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+
+    fn request(worker: BoxFuture<'static, anyhow::Result<()>>) -> TransferRequest {
+        TransferRequest {
+            process_name: "test".into(),
+            size: 0,
+            sender: None,
+            progress_watcher: watch::channel(0).1,
+            worker,
+            cancel: CancellationToken::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn finished_worker_does_not_overwrite_newer_transfer() {
+        let service = StreamingDataService::new();
+        let (done, wait) = tokio::sync::oneshot::channel::<()>();
+        service
+            .request_transfer(request(
+                async move {
+                    let _ = wait.await;
+                    Ok(())
+                }
+                .boxed(),
+            ))
+            .await
+            .unwrap();
+        let second = service
+            .request_transfer(request(futures::future::pending().boxed()))
+            .await
+            .unwrap();
+        drop(done);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            matches!(&*service.status().await, StreamingState::Transferring(ctx) if ctx.id == second)
+        );
+    }
 }
