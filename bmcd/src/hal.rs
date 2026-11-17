@@ -99,12 +99,12 @@ pub enum UsbMode {
 }
 
 impl UsbMode {
-    pub fn from_api_mode(value: i32) -> Self {
+    pub fn from_api_mode(value: i32) -> Option<Self> {
         match value & 0b11 {
-            0 => UsbMode::Host,
-            1 => UsbMode::Device,
-            2 => UsbMode::Flash,
-            _ => unreachable!(),
+            0 => Some(UsbMode::Host),
+            1 => Some(UsbMode::Device),
+            2 => Some(UsbMode::Flash),
+            _ => None,
         }
     }
 }
