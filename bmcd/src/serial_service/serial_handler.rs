@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use bytes::Bytes;
-use circular_buffer::CircularBuffer;
+use circular_buffer::FixedCircularBuffer;
 use futures::StreamExt;
 use futures::{Sink, SinkExt, Stream};
 use serde::Serialize;
@@ -32,7 +32,7 @@ use tracing::trace;
 
 use crate::utils::{string_from_utf16, string_from_utf32};
 
-type RingBuffer = CircularBuffer<OUTPUT_BUF_SIZE, u8>;
+type RingBuffer = FixedCircularBuffer<u8, OUTPUT_BUF_SIZE>;
 
 const OUTPUT_BUF_SIZE: usize = 16 * 1024;
 
