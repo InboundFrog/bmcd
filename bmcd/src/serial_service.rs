@@ -104,7 +104,8 @@ async fn handle_ws(
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     match serials[node].open_channel() {
         Ok((stream, sink)) => {
-            run_websocket(session, msg_stream, stream, sink).await;
+            // the session runs after the upgrade response has been sent.
+            actix_web::rt::spawn(run_websocket(session, msg_stream, stream, sink));
             Ok(res)
         }
         Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
