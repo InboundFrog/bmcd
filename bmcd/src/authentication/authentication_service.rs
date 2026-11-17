@@ -25,8 +25,11 @@ use actix_web::{
 use futures::future::LocalBoxFuture;
 use futures::StreamExt;
 use serde::Serialize;
-use std::{rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
+
+const MAX_AUTH_BODY_SIZE: usize = 4096;
+const AUTH_BODY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// This authentication service is designed to prepare for implementing "Redfish
 /// Session Login Authentication" as good as possible. Redfish is not yet
@@ -98,8 +101,7 @@ where
 
             // handle authentication requests and return
             if request.request().uri().path() == auth_path {
-                return authentication_request(&mut request, &peer, &mut *context.lock().await)
-                    .await;
+                return authentication_request(&mut request, &peer, &context).await;
             }
 
             let auth = match parse_authorization_header(&request) {
@@ -126,15 +128,35 @@ where
 async fn authentication_request<B>(
     request: &mut ServiceRequest,
     peer: &str,
-    context: &mut AuthenticationContext<UnixValidator>,
+    context: &Mutex<AuthenticationContext<UnixValidator>>,
 ) -> Result<ServiceResponse<EitherBody<B>>, Error> {
     tracing::debug!("authentication request");
-    let mut buffer = Vec::new();
-    while let Some(Ok(bytes)) = request.parts_mut().1.next().await {
-        buffer.extend_from_slice(&bytes);
-    }
+    // read the body before taking the lock, bounded in size and time, so an
+    // unauthenticated client cannot stall the API or exhaust memory.
+    let read_body = async {
+        let mut buffer = Vec::new();
+        while let Some(bytes) = request.parts_mut().1.next().await {
+            let bytes = bytes.map_err(|e| e.to_string())?;
+            if buffer.len() + bytes.len() > MAX_AUTH_BODY_SIZE {
+                return Err("request body too large".to_string());
+            }
+            buffer.extend_from_slice(&bytes);
+        }
+        Ok(buffer)
+    };
 
-    let response = match context.authenticate_request(peer, &buffer).await {
+    let buffer = match tokio::time::timeout(AUTH_BODY_TIMEOUT, read_body).await {
+        Ok(Ok(buffer)) => buffer,
+        Ok(Err(e)) => return bad_request_response(request.request(), e),
+        Err(_) => return bad_request_response(request.request(), "request body timeout"),
+    };
+
+    let response = match context
+        .lock()
+        .await
+        .authenticate_request(peer, &buffer)
+        .await
+    {
         Ok(session) => authenticated_response(request.request(), session.id.clone(), session),
         Err(error) => forbidden_response(request.request(), error),
     };
@@ -152,6 +174,18 @@ fn parse_authorization_header(request: &ServiceRequest) -> Result<&str, Authenti
             auth.to_str()
                 .map_err(|e| AuthenticationError::HttpParseError(e.to_string()))
         })
+}
+
+fn bad_request_response<B, E: ToString>(
+    request: &HttpRequest,
+    response_text: E,
+) -> Result<ServiceResponse<EitherBody<B>>, Error> {
+    Ok(ServiceResponse::new(
+        request.clone(),
+        HttpResponse::BadRequest()
+            .body(response_text.to_string())
+            .map_into_right_body(),
+    ))
 }
 
 fn forbidden_response<B, E: ToString>(
