@@ -73,6 +73,7 @@ type Context = (HashMap<u64, Vec<u8>>, Option<Sender<Instant>>);
 #[derive(Debug)]
 pub struct PersistencyStore {
     cache: RwLock<Context>,
+    defaults: HashMap<u64, Vec<u8>>,
     dirty: AtomicBool,
 }
 
@@ -83,7 +84,8 @@ impl<'a> PersistencyStore {
         S: Read + Seek + 'a,
     {
         let iter = keys.into_iter().map(|(k, v)| (default_hash(k), v));
-        let mut cache = HashMap::from_iter(iter);
+        let defaults = HashMap::from_iter(iter);
+        let mut cache = defaults.clone();
 
         if let Err(e) = Self::try_deserialize_source(source, &mut cache) {
             tracing::error!("coninue-ing without loading persistency: {}", e);
@@ -91,6 +93,7 @@ impl<'a> PersistencyStore {
 
         Ok(Self {
             cache: RwLock::new((cache, None)),
+            defaults,
             dirty: AtomicBool::new(false),
         })
     }
@@ -172,7 +175,16 @@ impl<'a> PersistencyStore {
     where
         for<'b> T: serde::Deserialize<'b>,
     {
-        self.try_get(key).await.unwrap()
+        match self.try_get(key).await {
+            Ok(value) => value,
+            Err(PersistencyError::UnknownKey(k)) => panic!("persistency key {k} not registered"),
+            Err(e) => {
+                // e.g. a corrupted value or a type that changed between versions.
+                tracing::error!("{e}. using default value for {key}");
+                bincode::deserialize(&self.defaults[&default_hash(key)])
+                    .expect("registered default must deserialize")
+            }
+        }
     }
 
     pub async fn try_get<T>(&self, key: &'a str) -> Result<T, PersistencyError<'a>>
@@ -335,5 +347,20 @@ mod tests {
         assert!(watcher.has_changed().unwrap());
         assert!(store.is_dirty());
         assert_eq!(store.get::<u128>("test").await, 333u128);
+    }
+
+    #[tokio::test]
+    async fn get_falls_back_to_default_on_bad_value() {
+        let mut cursor = Cursor::new(Vec::new());
+        let store = PersistencyStore::new(
+            [("test", bincode::serialize(&123u128).unwrap())],
+            &mut cursor,
+        )
+        .unwrap();
+
+        // e.g. a value that was persisted as a different type
+        store.set("test", 1u8).await;
+        assert!(store.try_get::<u128>("test").await.is_err());
+        assert_eq!(store.get::<u128>("test").await, 123u128);
     }
 }
