@@ -16,7 +16,7 @@ use crate::hal::{NodeId, PinController, UsbMode, UsbRoute};
 use crate::hal::{PowerController, UsbArchitecture};
 use crate::persistency::app_persistency::ApplicationPersistency;
 use crate::persistency::app_persistency::PersistencyBuilder;
-use crate::usb_boot::NodeDrivers;
+use crate::usb_boot::{DataTransport, NodeDrivers};
 use crate::utils::{self, get_timestamp_unix};
 use crate::{
     app::usb_gadget::append_msd_config_to_usb_gadget,
@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 use tokio::fs::OpenOptions;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::time::sleep;
 use tracing::{debug, info, instrument, trace};
 
@@ -358,7 +358,7 @@ impl BmcApplication {
         &self,
         node: NodeId,
         router: UsbRoute,
-    ) -> anyhow::Result<impl 'static + AsyncRead + AsyncWrite + AsyncSeek + Unpin> {
+    ) -> anyhow::Result<Box<dyn DataTransport>> {
         self.reboot_into_usb(node, UsbConfig::Flashing(node, router))
             .await?;
         Ok(self.node_drivers.load_as_stream().await?)

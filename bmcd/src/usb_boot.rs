@@ -21,8 +21,18 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 use tracing::{info, warn};
 
-pub trait DataTransport: AsyncRead + AsyncWrite + AsyncSeek + Send + Unpin {}
-impl DataTransport for tokio::fs::File {}
+#[async_trait]
+pub trait DataTransport: AsyncRead + AsyncWrite + AsyncSeek + Send + Unpin {
+    /// Flushes written data through to the underlying device.
+    async fn sync(&self) -> std::io::Result<()>;
+}
+
+#[async_trait]
+impl DataTransport for tokio::fs::File {
+    async fn sync(&self) -> std::io::Result<()> {
+        self.sync_all().await
+    }
+}
 
 #[async_trait]
 pub trait UsbBoot: 'static + Send + Sync + Display {

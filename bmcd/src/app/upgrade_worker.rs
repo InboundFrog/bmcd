@@ -80,6 +80,9 @@ impl UpgradeWorker {
                 BufStream::with_capacity(BLOCK_READ_SIZE, BLOCK_WRITE_SIZE, device);
             let (bytes_written, written_crc) =
                 self.try_write_node(node, reader, &mut buf_stream).await?;
+            // without this, data can still be dirty in the page cache when the
+            // node is powered off, and the crc check below would read the cache.
+            buf_stream.get_ref().sync().await?;
 
             if self.do_crc_validation {
                 buf_stream.seek(std::io::SeekFrom::Start(0)).await?;
